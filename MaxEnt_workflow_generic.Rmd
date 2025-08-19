@@ -1,6 +1,6 @@
 ---
 title: "MaxEnt Workflow — Presence-only suitability modelling (generic template)"
-author: ""
+author: "Enrico Lucci"
 output:
   html_document:
     df_print: paged
