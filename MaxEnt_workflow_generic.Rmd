@@ -1,0 +1,226 @@
+---
+title: "MaxEnt Workflow — Presence-only suitability modelling (generic template)"
+author: ""
+output:
+  html_document:
+    df_print: paged
+    number_sections: true
+params:
+  data_dir: "data"
+  rasters_subdir: "rasters"
+  study_shp: "study_area.shp"     # Shapefile: .shp + .dbf + .shx + .prj
+  presence_csv: "presence.csv"    # CSV with lon,lat[,label] in WGS84
+  proj_epsg: 3857                 # set to your projected CRS (e.g., local UTM)
+  bg_points: 10000                # number of background points
+  train_frac: 0.5                 # fraction of presences used for training
+  out_dir: "outputs"
+  fig_dir: "outputs/figures"
+  out_tif: "suitability.tif"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+set.seed(42)
+```
+
+# Aim
+
+A **generic** and **reusable** MaxEnt workflow for presence‑only data and environmental rasters.  
+It uses a **Shapefile** for the study area, a CSV for presence points, and stacks all GeoTIFFs found in a rasters folder.
+
+**Packages used (and only these):** `terra`, `sf`, `raster`, `dismo`, `maxnet`, `ggplot2`.
+
+---
+
+# 1) Packages
+
+```{r}
+library(terra)     # rasters + masking, sampling
+library(sf)        # vectors + Shapefile I/O
+library(raster)    # legacy helpers if needed by your data
+library(dismo)     # MaxEnt (Java) + evaluation utilities
+library(maxnet)    # fallback when Java MaxEnt is unavailable
+library(ggplot2)   # quick visualisation
+```
+
+---
+
+# 2) Inputs & paths (parameterised)
+
+```{r}
+# Resolve paths from YAML params
+dir_data    <- params$data_dir
+dir_rasters <- file.path(dir_data, params$rasters_subdir)
+path_shape  <- file.path(dir_data, params$study_shp)
+path_points <- file.path(dir_data, params$presence_csv)
+
+dir_outputs <- params$out_dir
+dir_figures <- params$fig_dir
+if (!dir.exists(dir_outputs)) dir.create(dir_outputs, recursive = TRUE)
+if (!dir.exists(dir_figures)) dir.create(dir_figures, recursive = TRUE)
+
+# Read study area (Shapefile). Any CRS is accepted; reproject to a projected CRS for analysis.
+study <- sf::st_read(path_shape, quiet = TRUE)
+study_proj <- sf::st_transform(study, params$proj_epsg)
+
+# Read presence points (must have lon, lat in WGS84)
+pres <- read.csv(path_points, stringsAsFactors = FALSE)
+stopifnot(all(c("lon","lat") %in% names(pres)))
+pts_wgs  <- sf::st_as_sf(pres, coords = c("lon","lat"), crs = 4326)
+pts_proj <- sf::st_transform(pts_wgs, params$proj_epsg)
+```
+
+*Caption:* *Study area and presence points are validated and reprojected using the chosen EPSG code.*
+
+---
+
+# 3) Environmental covariates (stack)
+
+```{r}
+# Load all GeoTIFF rasters found in the rasters folder
+tif_files <- list.files(dir_rasters, "\\.(tif|tiff)$", full.names = TRUE, ignore.case = TRUE)
+if (length(tif_files) == 0) stop("No GeoTIFFs found in: ", dir_rasters)
+
+# Build a SpatRaster stack
+env_list <- lapply(tif_files, terra::rast)
+env <- do.call(c, env_list)
+names(env) <- make.names(names(env), unique = TRUE)
+
+# Project, crop and mask to the study area
+env <- terra::project(env, paste0("EPSG:", params$proj_epsg))
+env <- terra::crop(env, terra::vect(study_proj))
+env <- terra::mask(env, terra::vect(study_proj))
+
+# Optional check
+env
+```
+
+*Caption:* *All rasters are stacked and aligned to the study polygon. Replace EPSG as needed via parameters.*
+
+---
+
+# 4) Presence–background design
+
+```{r}
+# Keep only presences within the study area
+inside <- sf::st_within(pts_proj, study_proj, sparse = FALSE)
+pts_in <- pts_proj[inside, , drop = FALSE]
+if (nrow(pts_in) < 10) warning("Few presence points after clipping; check inputs.")
+
+# Extract environmental values at presence points
+p_env <- terra::extract(env, terra::vect(pts_in))
+p_env <- p_env[complete.cases(p_env), , drop = FALSE]
+
+# Background points sampled randomly within valid env cells (NA removed)
+bg_pts <- terra::spatSample(env, size = params$bg_points, method = "random", as.points = TRUE, na.rm = TRUE)
+b_env  <- terra::extract(env, bg_pts)
+b_env  <- b_env[complete.cases(b_env), , drop = FALSE]
+
+# Train/test split for presences (parameterised)
+set.seed(42)
+n_p  <- nrow(p_env)
+n_tr <- max(1, floor(params$train_frac * n_p))
+i_tr <- sample(seq_len(n_p), n_tr)
+
+p_tr <- p_env[i_tr, , drop = FALSE]
+p_te <- p_env[-i_tr, , drop = FALSE]
+
+# Background reused for both train/test (common in presence–background settings)
+b_tr <- b_env
+b_te <- b_env
+```
+
+*Caption:* *Random background is sampled across valid cells; presences are split into train/test according to `train_frac`.*
+
+---
+
+# 5) Fit MaxEnt (Java if available, otherwise maxnet)
+
+```{r}
+# Prepare predictors (columns only)
+x_tr <- rbind(p_tr, b_tr)
+y_tr <- c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr)))
+
+# Detect Java MaxEnt jar within {dismo}
+has_jar <- file.exists(system.file("java", "maxent.jar", package = "dismo"))
+
+if (has_jar) {
+  message("Using dismo::maxent (Java).")
+  me <- dismo::maxent(x = x_tr, p = y_tr,
+                      args = c("responsecurves=true", "jackknife=true", "outputformat=logistic"))
+  model_type <- "dismo_maxent"
+} else {
+  message("Java MaxEnt not found — using {maxnet} fallback.")
+  f <- maxnet.formula(y_tr, x_tr, classes = "lqph")   # typical feature set (adjust if needed)
+  me <- maxnet::maxnet(p = y_tr, data = x_tr, f = f, family = "bernoulli")
+  model_type <- "maxnet"
+}
+```
+
+*Caption:* *The workflow prefers Java MaxEnt when available; otherwise it falls back to `{maxnet}`.*
+
+---
+
+# 6) Evaluate (held‑out AUC)
+
+```{r}
+# Build test set
+x_te <- rbind(p_te, b_te)
+y_te <- c(rep(1, nrow(p_te)), rep(0, nrow(b_te)))
+
+# Predict numeric scores
+if (model_type == "dismo_maxent") {
+  preds_te <- as.numeric(predict(me, x_te))
+} else {
+  preds_te <- as.numeric(predict(me, x_te, type = "cloglog"))
+}
+
+# AUC via dismo::evaluate (presence vs background scores)
+ev <- dismo::evaluate(p = preds_te[y_te == 1], a = preds_te[y_te == 0])
+auc_val <- ev@auc
+cat(sprintf("Held-out AUC: %.3f\n", auc_val))
+```
+
+*Caption:* *AUC is computed on held‑out presences versus background scores.*
+
+---
+
+# 7) Predict & export suitability (GeoTIFF)
+
+```{r}
+# Predict over the raster stack
+if (model_type == "dismo_maxent") {
+  pred <- terra::predict(env, me)  # logistic output by default
+} else {
+  pred_fun <- function(df) as.numeric(predict(me, as.data.frame(df), type = "cloglog"))
+  pred <- terra::predict(env, pred_fun)
+}
+names(pred) <- "suitability"
+
+# Mask to study area and export
+pred <- terra::mask(pred, terra::vect(study_proj))
+out_path <- file.path(dir_outputs, params$out_tif)
+terra::writeRaster(pred, out_path, overwrite = TRUE)
+cat("Wrote GeoTIFF:", out_path, "\n")
+```
+
+*Caption:* *A continuous suitability surface is written to `outputs/` as a GeoTIFF.*
+
+---
+
+# 8) Quick visualisation (PNG)
+
+```{r}
+df <- as.data.frame(terra::as.points(pred, na.rm = TRUE), xy = TRUE)
+names(df) <- c("x","y","suitability")
+
+p <- ggplot(df, aes(x, y, fill = suitability)) +
+  geom_raster() +
+  coord_equal() +
+  labs(title = "MaxEnt suitability", fill = "Suitability") +
+  theme_minimal(base_size = 12)
+
+png_path <- file.path(dir_figures, "suitability_map.png")
+ggplot2::ggsave(png_path, p, width = 9, height = 6, dpi = 300)
+cat("Saved figure:", png_path, "\n")
+```
