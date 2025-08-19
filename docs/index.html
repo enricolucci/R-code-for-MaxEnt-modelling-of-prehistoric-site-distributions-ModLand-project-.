@@ -24,7 +24,7 @@
   <header>
     <div class="wrap">
       <h1>MaxEnt — Generic Workflow</h1>
-      <p class="muted">Minimal, reusable template (R Markdown + shapefiles + GeoTIFF rasters). </p>
+      <p class="muted">Minimal, reusable template (R Markdown + shapefiles + GeoTIFF rasters). UK-English captions. Only the packages actually used in the Rmd.</p>
     </div>
   </header>
 
@@ -47,15 +47,23 @@
         </div>
 
         <div class="card">
-          <h3>How to reuse</h3>
-          <ol class="small">
-            <li>Put your <span class="mono">study_area.shp</span> (+ sidecars) and <span class="mono">presence.csv</span> under <span class="mono">/data</span>.</li>
-            <li>Add GeoTIFFs to <span class="mono">/data/rasters</span> (any number, any names).</li>
-            <li>Set parameters in the Rmd YAML (EPSG, background size, output names).</li>
-            <li>Knit to HTML and (optionally) publish via GitHub Pages.</li>
-          </ol>
+          <h3>MODLAND resources</h3>
+          <p class="small">
+            <a class="mono" href="https://enricolucci.github.io/MODLANDwebmap/" target="_blank" rel="noopener">🌍 MODLAND Webmap</a><br>
+            <a class="mono" href="https://modlandarchaeologicalproject.wordpress.com/" target="_blank" rel="noopener">🏛️ MODLAND Project site</a>
+          </p>
         </div>
       </div>
+    </section>
+
+    <section>
+      <h2>How to reuse</h2>
+      <ol class="small">
+        <li>Place your <span class="mono">study_area.shp</span> (+ sidecars) and <span class="mono">presence.csv</span> under <span class="mono">/data</span>.</li>
+        <li>Add GeoTIFFs to <span class="mono">/data/rasters</span> (any number, any names).</li>
+        <li>Adjust parameters in the Rmd YAML (EPSG, background size, output names) and run the Rmd in your R environment.</li>
+        <li>Outputs (e.g., suitability GeoTIFF and quick map) are written locally under <span class="mono">/outputs</span>.</li>
+      </ol>
     </section>
 
     <section>
@@ -72,7 +80,7 @@
 
     <section>
       <h2>Licence & citation</h2>
-      <p class="small">Code under your chosen research licence (e.g. GPL‑3.0). Cite this repository and your related publications when reusing.</p>
+      <p class="small">Code under your chosen research licence (e.g., GPL-3.0). Cite this repository and related publications when reusing.</p>
     </section>
   </main>
 
@@ -84,24 +92,22 @@
 
   <script>
     (function(){
-      // Derive USERNAME and REPO from a typical Pages URL: https://USERNAME.github.io/REPO/
+      // Derive USERNAME and REPO from Pages URL: https://USERNAME.github.io/REPO/
       var loc = window.location;
-      var parts = loc.pathname.replace(/^\//,'').split('/'); // ["REPO", ...] for project pages
+      var parts = loc.pathname.replace(/^\\//,'').split('/'); // ["REPO", ...]
       var username = loc.hostname.split('.')[0];              // USERNAME
       var repo = parts.length ? parts[0] : "";                // REPO
-      if (!repo) { repo = ""; } // fallback
 
       var baseRepo = "https://github.com/" + username + "/" + repo;
       var rawBase  = "https://raw.githubusercontent.com/" + username + "/" + repo + "/main";
 
-      // Links
       document.getElementById('repo-link').href = baseRepo;
       document.getElementById('view-rmd').href  = baseRepo + "/blob/main/MaxEnt_workflow_generic.Rmd";
       document.getElementById('raw-rmd').href   = rawBase  + "/MaxEnt_workflow_generic.Rmd";
 
-      // Year
       document.getElementById('y').textContent = new Date().getFullYear();
     })();
   </script>
 </body>
 </html>
+
