@@ -1,0 +1,229 @@
+---
+title: "MaxEnt Workflow — ModLand (archaeology)"
+author: "Enrico Lucci"
+output:
+  html_document:
+    df_print: paged
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+set.seed(42)
+```
+
+# Aim
+
+A **clear and faithful** MaxEnt workflow based on the original ModLand code.  
+It uses **Shapefile** for the study area, presence‑only points from CSV, and environmental rasters.
+
+**Packages used (and only these):** `terra`, `sf`, `raster`, `dismo`, `maxnet`, `ggplot2`.
+
+Expected files:
+
+- `data/study_area.shp` (+ `.dbf/.shx/.prj`)
+- `data/presence.csv` with at least `lon,lat` (WGS84)
+- rasters under `data/rasters/` (`*.tif`), e.g. `dem.tif`, `tpi.tif`, `tri.tif`, `twi.tif`, etc.
+
+---
+
+# 1) Packages
+
+```{r}
+library(terra)     # rasters + masking, sampling
+library(sf)        # vectors + Shapefile
+library(raster)    # legacy helpers (used if needed by your code)
+library(dismo)     # MaxEnt (Java) and evaluation
+library(maxnet)    # fallback if Java MaxEnt is not available
+library(ggplot2)   # quick visualisation
+```
+
+---
+
+# 2) Inputs & paths
+
+```{r}
+# Relative paths
+dir_data     <- "data"
+dir_rasters  <- file.path(dir_data, "rasters")
+path_shape   <- file.path(dir_data, "study_area.shp")
+path_points  <- file.path(dir_data, "presence.csv")
+
+dir_outputs  <- "outputs"
+dir_figures  <- file.path(dir_outputs, "figures")
+if (!dir.exists(dir_outputs)) dir.create(dir_outputs, recursive = TRUE)
+if (!dir.exists(dir_figures)) dir.create(dir_figures, recursive = TRUE)
+
+# Read study area (Shapefile). Any CRS is accepted; we will reproject to a projected CRS for processing.
+study <- sf::st_read(path_shape, quiet = TRUE)
+
+# Presence points: must have lon, lat in WGS84 (EPSG:4326)
+pres <- read.csv(path_points, stringsAsFactors = FALSE)
+stopifnot(all(c("lon","lat") %in% names(pres)))
+pts_wgs <- sf::st_as_sf(pres, coords = c("lon","lat"), crs = 4326)
+
+# Choose a projected CRS for analysis (replace 3857 with your preferred EPSG if needed)
+study_3857 <- sf::st_transform(study, 3857)
+pts_3857   <- sf::st_transform(pts_wgs, 3857)
+```
+
+*Caption:* *Study area and presence points are validated and reprojected. Replace the CRS with your local UTM if preferred.*
+
+---
+
+# 3) Environmental covariates
+
+```{r}
+# Load all GeoTIFF rasters found in data/rasters/
+tif_files <- list.files(dir_rasters, "\\.(tif|tiff)$", full.names = TRUE, ignore.case = TRUE)
+if (length(tif_files) == 0) stop("No GeoTIFFs found in data/rasters/")
+
+env_list <- lapply(tif_files, terra::rast)
+env <- do.call(c, env_list)         # SpatRaster stack
+names(env) <- make.names(names(env), unique = TRUE)
+
+# Align, crop and mask to study area
+env <- terra::project(env, "EPSG:3857")
+env <- terra::crop(env, terra::vect(study_3857))
+env <- terra::mask(env, terra::vect(study_3857))
+
+# Optional: quick check
+env
+```
+
+*Caption:* *All rasters are stacked, projected to EPSG:3857, and masked to the study polygon.*
+
+---
+
+# 4) Presence–background data
+
+```{r}
+# Keep only presences within the study area
+inside <- sf::st_within(pts_3857, study_3857, sparse = FALSE)
+pts_in <- pts_3857[inside, , drop = FALSE]
+if (nrow(pts_in) < 10) warning("Few presence points after clipping; consider checking inputs.")
+
+# Extract environmental values at presence points
+p_env <- terra::extract(env, terra::vect(pts_in))
+p_env <- p_env[complete.cases(p_env), , drop = FALSE]
+
+# Background points sampled randomly within valid env cells (NA removed)
+bg_pts <- terra::spatSample(env, size = 10000, method = "random", as.points = TRUE, na.rm = TRUE)
+b_env  <- terra::extract(env, bg_pts)
+b_env  <- b_env[complete.cases(b_env), , drop = FALSE]
+
+# Train/test split for presences (50/50; adjust to your original code)
+set.seed(42)
+n_p   <- nrow(p_env)
+i_tr  <- sample(seq_len(n_p), floor(0.5 * n_p))
+p_tr  <- p_env[i_tr, , drop = FALSE]
+p_te  <- p_env[-i_tr, , drop = FALSE]
+
+# Background reused for both train/test
+b_tr <- b_env
+b_te <- b_env
+```
+
+*Caption:* *Presence points are clipped to the study area. Background is sampled at random within valid environmental cells.*
+
+---
+
+# 5) Fit MaxEnt model
+
+```{r}
+# Prepare matrices (predictors only)
+x_tr <- rbind(p_tr, b_tr)
+y_tr <- c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr)))
+
+# Check if Java MaxEnt is available (jar bundled in {dismo})
+has_jar <- file.exists(system.file("java", "maxent.jar", package = "dismo"))
+
+if (has_jar) {
+  message("Using dismo::maxent (Java).")
+  me <- dismo::maxent(x = x_tr, p = y_tr,
+                      args = c("responsecurves=true", "jackknife=true", "outputformat=logistic"))
+  model_type <- "dismo_maxent"
+} else {
+  message("Java MaxEnt not found — using {maxnet} fallback.")
+  # Use typical 'lqph' feature classes; adapt if your original code differs
+  f <- maxnet.formula(y_tr, x_tr, classes = "lqph")
+  me <- maxnet::maxnet(p = y_tr, data = x_tr, f = f, family = "bernoulli")
+  model_type <- "maxnet"
+}
+```
+
+*Caption:* *If Java MaxEnt (dismo) is available we use it; otherwise we fall back to `{maxnet}` with equivalent link.*
+
+---
+
+# 6) Evaluate (AUC)
+
+```{r}
+# Build test matrices
+x_te <- rbind(p_te, b_te)
+y_te <- c(rep(1, nrow(p_te)), rep(0, nrow(b_te)))
+
+if (model_type == "dismo_maxent") {
+  preds_te <- as.numeric(predict(me, x_te))
+} else {
+  preds_te <- as.numeric(predict(me, x_te, type = "cloglog"))
+}
+
+# AUC via dismo::evaluate
+ev <- dismo::evaluate(p = preds_te[y_te == 1], a = preds_te[y_te == 0])
+auc_val <- ev@auc
+cat(sprintf("Held‑out AUC: %.3f\n", auc_val))
+```
+
+*Caption:* *AUC on the held‑out test set using `dismo::evaluate`.*
+
+---
+
+# 7) Predict and export raster
+
+```{r}
+# Predict over the raster stack
+if (model_type == "dismo_maxent") {
+  pred <- terra::predict(env, me)  # logistic by default
+} else {
+  pred_fun <- function(df) as.numeric(predict(me, as.data.frame(df), type = "cloglog"))
+  pred <- terra::predict(env, pred_fun)
+}
+names(pred) <- "suitability"
+
+# Mask to study area and write GeoTIFF
+pred <- terra::mask(pred, terra::vect(study_3857))
+out_tif <- file.path(dir_outputs, "suitability.tif")
+terra::writeRaster(pred, out_tif, overwrite = TRUE)
+cat("Wrote:", out_tif, "\n")
+```
+
+*Caption:* *A continuous suitability surface is exported as GeoTIFF (`outputs/suitability.tif`).*
+
+---
+
+# 8) Quick visualisation (PNG)
+
+```{r}
+df <- as.data.frame(terra::as.points(pred, na.rm = TRUE), xy = TRUE)
+names(df) <- c("x","y","suitability")
+
+p <- ggplot(df, aes(x, y, fill = suitability)) +
+  geom_raster() +
+  coord_equal() +
+  labs(title = "MaxEnt suitability (ModLand)", fill = "Suitability") +
+  theme_minimal(base_size = 12)
+
+png_path <- file.path(dir_figures, "suitability_map.png")
+ggplot2::ggsave(png_path, p, width = 9, height = 6, dpi = 300)
+cat("Saved figure:", png_path, "\n")
+```
+
+*Caption:* *A quick PNG map is saved under `outputs/figures/`.*
+
+---
+
+## Notes
+- To run by chronological phase (ECA/EBA/MBA…), filter `presence.csv` before running or loop by phase.
+- If your original script expects specific raster names, keep those filenames unchanged in `data/rasters/`.
+- Replace EPSG:3857 with your usual projected CRS if required.

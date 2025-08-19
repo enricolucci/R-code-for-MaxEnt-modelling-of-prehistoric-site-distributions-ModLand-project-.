@@ -1,0 +1,1 @@
+Place your study_area.shp (+dbf/shx/prj), presence.csv (lon,lat[,label]), and rasters/*.tif here.
