@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MaxEnt — Generic Workflow</title>
+  <meta name="description" content="Reusable R Markdown and minimal interface for presence-only MaxEnt modelling.">
+  <style>
+    :root { --fg:#111; --muted:#555; --bg:#fff; --border:#e5e7eb; --link:#0a58ca; }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .wrap{max-width:960px;margin:0 auto;padding:1.25rem}
+    header{padding:2rem 0 1rem;border-bottom:1px solid var(--border)}
+    h1{margin:0 0 .5rem;font-size:1.9rem}
+    h2{margin:1.75rem 0 .75rem;font-size:1.3rem}
+    .muted{color:var(--muted)} a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+    .grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+    .card{border:1px solid var(--border);border-radius:12px;padding:1rem;background:#fff}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+    footer{border-top:1px solid var(--border);margin-top:2rem;padding:1rem 0}
+    .small{font-size:.95rem}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>MaxEnt — Generic Workflow</h1>
+      <p class="muted">Minimal, reusable template (R Markdown + shapefiles + GeoTIFF rasters). UK‑English captions. Only the packages actually used in the Rmd.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section>
+      <h2>Quick access</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>R Markdown</h3>
+          <p>Generic, parameterised template.</p>
+          <p class="small">
+            <a class="mono" id="view-rmd" href="#">View on GitHub</a><br>
+            <a class="mono" id="raw-rmd" href="#">Download raw</a>
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Rendered HTML</h3>
+          <p>If you knit locally (or via CI), place the HTML here.</p>
+          <p class="small"><a class="mono" id="rendered" href="MaxEnt_workflow_generic.html">Open <span class="mono">MaxEnt_workflow_generic.html</span></a></p>
+        </div>
+
+        <div class="card">
+          <h3>Repository</h3>
+          <p class="small"><a class="mono" id="repo-link" href="#">Open repository</a></p>
+        </div>
+
+        <div class="card">
+          <h3>How to reuse</h3>
+          <ol class="small">
+            <li>Put your <span class="mono">study_area.shp</span> (+ sidecars) and <span class="mono">presence.csv</span> under <span class="mono">/data</span>.</li>
+            <li>Add GeoTIFFs to <span class="mono">/data/rasters</span> (any number, any names).</li>
+            <li>Set parameters in the Rmd YAML (EPSG, background size, output names).</li>
+            <li>Knit to HTML and (optionally) publish via GitHub Pages.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Dependencies used</h2>
+      <ul>
+        <li class="mono">terra</li>
+        <li class="mono">sf</li>
+        <li class="mono">raster</li>
+        <li class="mono">dismo</li>
+        <li class="mono">maxnet</li>
+        <li class="mono">ggplot2</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Licence & citation</h2>
+      <p class="small">Code under your chosen research licence (e.g. GPL‑3.0). Cite this repository and your related publications when reusing.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap small muted">
+      © <span id="y"></span> — Generic MaxEnt template • No frameworks, just HTML.
+    </div>
+  </footer>
+
+  <script>
+    (function(){
+      // Derive USERNAME and REPO from a typical Pages URL: https://USERNAME.github.io/REPO/
+      var loc = window.location;
+      var parts = loc.pathname.replace(/^\//,'').split('/'); // ["REPO", ...] for project pages
+      var username = loc.hostname.split('.')[0];              // USERNAME
+      var repo = parts.length ? parts[0] : "";                // REPO
+      if (!repo) { repo = ""; } // fallback
+
+      var baseRepo = "https://github.com/" + username + "/" + repo;
+      var rawBase  = "https://raw.githubusercontent.com/" + username + "/" + repo + "/main";
+
+      // Links
+      document.getElementById('repo-link').href = baseRepo;
+      document.getElementById('view-rmd').href  = baseRepo + "/blob/main/MaxEnt_workflow_generic.Rmd";
+      document.getElementById('raw-rmd').href   = rawBase  + "/MaxEnt_workflow_generic.Rmd";
+
+      // Year
+      document.getElementById('y').textContent = new Date().getFullYear();
+    })();
+  </script>
+</body>
+</html>
