@@ -6,7 +6,6 @@ It follows the original ModLand code closely, with only small practical changes:
 - relative paths (no absolute paths)
 - **Shapefile** for the study area
 - captions and comments in **UK English**
-- automatic fallback to `{maxnet}` if Java MaxEnt is unavailable
 
 ## Data layout
 ```
